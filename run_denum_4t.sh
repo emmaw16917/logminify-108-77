@@ -17,6 +17,10 @@ fi
 echo "build done $(date -Is)" | tee -a results/run.log
 
 for name in $LIST; do
+    if [ -s "results/$name.out" ] && grep -q "Compression ratio" "results/$name.out"; then
+        echo "=== $name already done, skip ===" | tee -a results/run.log
+        continue
+    fi
     echo "=== $name start $(date -Is) ===" | tee -a results/run.log
     ./denum_compress "$name" 100000 1 4 > "results/$name.out" 2> "results/$name.err"
     rc=$?
