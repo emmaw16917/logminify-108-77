@@ -18,6 +18,7 @@ mkdir -p results
         cr=$(awk '/Compression ratio/ {v=$3} END {print v}' "$out")
         cs=$(awk '/Compression speed/ {v=$3} END {print v}' "$out")
         ms=$(grep -o 'completed in [0-9]* milliseconds' "$out" | tail -1 | grep -o '[0-9]*')
+        [ -n "$cr" ] && [ -n "$ms" ] || continue
         printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$name" "$input" "$achieved" "$cr" "$cs" "$ms"
     done
 } > "$OUT.body"
