@@ -37,6 +37,7 @@ Part five: Main function
 #include <algorithm>
 #include <queue>
 #include <cmath>
+#include <cstring>
 
 std::queue<std::string> lines;
 std::mutex mtx;
