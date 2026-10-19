@@ -243,6 +243,79 @@ private:
                 size_t len = num.length();
                 if (len < 15) {
                     std::string pattern_key = "<" + std::string(1, substitution[len - 1]) + (len >= 4 ? std::string(1, substitution[num[0] - '0']) : "") + ">";
+                    try{
+                        patterns[pattern_key].push_back(std::stoll(num));
+                        result += input.substr(last_pos, ovector[0] - last_pos) + pattern_key;
+                    }catch(...){
+                        result += input.substr(last_pos, ovector[0] - last_pos) + num;
+                    }
+                } else {
+                    result += input.substr(last_pos, ovector[0] - last_pos) + num;
+                }
+            } else {
+                std::string match = input.substr(ovector[0], ovector[1] - ovector[0]);
+                // 检查是否为IP地址模式
+                if (substitution == "<I>") {
+                    // 按点分割
+                    std::vector<std::string> segments;
+                    size_t start = 0, end = 0;
+                    while ((end = match.find('.', start)) != std::string::npos) {
+                        segments.push_back(match.substr(start, end - start));
+                        start = end + 1;
+                    }
+                    segments.push_back(match.substr(start));
+                    // 每段补齐3位
+                    std::string padded_ip;
+                    for (const auto& seg : segments) {
+                        std::string seg_pad = seg;
+                        while (seg_pad.length() < 3) seg_pad = "0" + seg_pad;
+                        padded_ip += seg_pad;
+                    }
+                    patterns[substitution].push_back(std::stoll(padded_ip));
+                    result += input.substr(last_pos, ovector[0] - last_pos) + substitution;
+                }
+                else{
+                    std::string num_str;
+                    for (char c : match) {
+                        if (std::isdigit(static_cast<unsigned char>(c))) {
+                            num_str += c;
+                        }
+                    }
+                    std::string pattern_key = substitution;
+                    try{
+                        patterns[pattern_key].push_back(std::stoll(num_str));
+                        result += input.substr(last_pos, ovector[0] - last_pos) + pattern_key;
+                    }catch(...){
+                        result += input.substr(last_pos, ovector[0] - last_pos) + num_str;
+                    }
+                }
+            }
+            last_pos = ovector[1];
+        }
+        result += input.substr(last_pos);
+
+        pcre2_match_data_free(match_data); // Release the memory used for regex matching.
+
+        return result;
+    }
+/*    std::string process_with_pattern(const std::string &input, pcre2_code *re, const std::string &substitution, std::unordered_map<std::string, std::list<int64_t>> &patterns, bool is_num = false) {
+        std::string result;
+        PCRE2_SIZE last_pos = 0;
+
+        PCRE2_SPTR subject = (PCRE2_SPTR)input.c_str();
+        size_t subject_length = strlen((char *)subject);
+
+        pcre2_match_data *match_data = pcre2_match_data_create_from_pattern(re, nullptr);
+
+        int rc;
+        while ((rc = pcre2_match(re, subject, subject_length, last_pos, 0, match_data, nullptr)) > 0) {
+            PCRE2_SIZE *ovector = pcre2_get_ovector_pointer(match_data);
+
+            if (is_num) {
+                std::string num = input.substr(ovector[0], ovector[1] - ovector[0]);
+                size_t len = num.length();
+                if (len < 15) {
+                    std::string pattern_key = "<" + std::string(1, substitution[len - 1]) + (len >= 4 ? std::string(1, substitution[num[0] - '0']) : "") + ">";
                     patterns[pattern_key].push_back(std::stoll(num));
                     result += input.substr(last_pos, ovector[0] - last_pos) + pattern_key;
                 } else {
@@ -267,7 +340,7 @@ private:
         pcre2_match_data_free(match_data); // Release the memory used for regex matching.
 
         return result;
-    }
+    }*/
 };
 
 
@@ -568,13 +641,13 @@ std::list<int64_t> delta_transform(const std::list<int64_t>& num_list) {
 
 void compressDirectory(const std::string& output_dir, int block_id) {
     std::string directoryPath = output_dir + "/" + std::to_string(block_id);
-    std::string command = "tar -cJf " + output_dir + "/compressed" + std::to_string(block_id) + ".xz " + directoryPath;
+    std::string command = "tar -cf " + output_dir + "/compressed" + std::to_string(block_id) + ".tar.xz " + " --use-compress-program='lzma -6' " + directoryPath;
     int result = std::system(command.c_str());
 
     if (result != 0) {
         std::cerr << "Command failed with return code: " << result << std::endl;
     } else {
-        std::cout << "Block " << block_id << " directory successfully compressed into compressed" << block_id << ".xz" << std::endl;
+        std::cout << "Block " << block_id << " directory successfully compressed into compressed" << block_id << ".tar.xz" << std::endl;
     }
 }
 
@@ -644,12 +717,14 @@ argv[1]: block size
 
 argv[2]: mode, "1" represents default Denum, "2" is to generate logs without numbers for RQ3, "3" is Denum without string processing for RQ4
 
+argv[3]: number of worker threads (optional, default 4)
+
 DESCRIPTIONS: Divide the input log into different log blocks, call processLogBlock for compression in multiprocessing manner, and output CR & CS, etc.
 */
 
 int main(int argc, char* argv[]) { 
     if (argc < 4) {
-        std::cerr << "Usage: " << argv[0] << " <logname>" << std::endl;
+        std::cerr << "Usage: " << argv[0] << " <logname> <block_size> <mode> [threads, default 4]" << std::endl;
         return 1;
     }
 
@@ -672,8 +747,37 @@ int main(int argc, char* argv[]) {
     auto start = std::chrono::high_resolution_clock::now();
     const std::string log_path = "Logs/" + logname + "/" + logname + ".log";
     
-    const int num_threads = 4; // Adjust based on the number of CPU cores.
+    int num_threads = 40; // argv[4], default 4
+    if (argc > 4) {
+        try {
+            num_threads = std::stoi(argv[4]);
+        } catch (const std::exception& e) {
+            num_threads = 0;
+        }
+        if (num_threads < 1) {
+            std::cerr << "Invalid thread count: " << argv[4] << std::endl;
+            return 1;
+        }
+    }
+    std::cout << "Threads: " << num_threads << std::endl;
     std::vector<std::future<void>> futures;
+    auto wait_for_available_slot = [&]() {
+        while (futures.size() >= static_cast<size_t>(num_threads)) {
+            bool released = false;
+            for (auto it = futures.begin(); it != futures.end(); ++it) {
+                if (it->wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
+                    it->get();
+                    futures.erase(it);
+                    released = true;
+                    break;
+                }
+            }
+            if (!released && !futures.empty()) {
+                futures.front().get();
+                futures.erase(futures.begin());
+            }
+        }
+    };
     std::map<int, std::vector<std::string>> final_outputs;
 
     LogProcessor log_processor(logname);
@@ -699,6 +803,7 @@ int main(int argc, char* argv[]) {
         block.push_back(line);
         if (block.size() == BLOCK_SIZE) {
             futures.push_back(std::async(std::launch::async, processLogBlock, block, block_index, "output/" + logname, std::ref(log_processor), std::ref(denum_processor), std::ref(final_outputs), output_logs));
+            wait_for_available_slot();
             block.clear();
             ++block_index;
         }
@@ -707,11 +812,13 @@ int main(int argc, char* argv[]) {
     // Process any remaining log lines (if any).
     if (!block.empty()) {
         futures.push_back(std::async(std::launch::async, processLogBlock, block, block_index, "output/" + logname, std::ref(log_processor), std::ref(denum_processor), std::ref(final_outputs),output_logs));
+        wait_for_available_slot();
     }
 
     // Wait for all threads to complete.
-    for (auto& future : futures) {
-        future.wait();
+    while (!futures.empty()) {
+        futures.front().get();
+        futures.erase(futures.begin());
     }
 
     auto stop = std::chrono::high_resolution_clock::now();
@@ -722,19 +829,31 @@ int main(int argc, char* argv[]) {
     double totalSize = 0;
     double totalBytes = 0;
     for (int i = 0; i <= block_index; ++i) {
-        std::string compressed_path = "output/" + logname + "/compressed" + std::to_string(i) + ".xz";
+        std::string compressed_path = "output/" + logname + "/compressed" + std::to_string(i) + ".tar.xz";
         std::uintmax_t achieved_fileSize = std::filesystem::file_size(compressed_path);
         double dataSizeInMB = static_cast<double>(achieved_fileSize) / (1024.0 * 1024.0);
         totalSize += dataSizeInMB;
         totalBytes += achieved_fileSize;
     }
     double CR = dataSizeInMB / totalSize;
+    
+    std::cout << "Replacement completed in " << duration.count() << " milliseconds." << std::endl;
+    std::cout << "Compression speed: " << std::fixed << std::setprecision(6) << speedInMBPerSecond << " MB/s" << std::endl;
+    std::cout << "Achieved size: " << totalBytes << " Bytes" << std::endl;
+    std::cout << "Original size: " << dataSizeInMB << " MB" << std::endl;
+    std::cout << "Compressed size:" << totalSize << " MB" << std::endl;
+    std::cout << "Compression ratio: " << std::fixed << std::setprecision(6) << CR << std::endl;
 
     // Output time taken CR&CS, achieved size, keeping three decimal places.
-    std::cout << "Replacement completed in " << duration.count() << " milliseconds." << std::endl;
-    std::cout << "Compression speed: " << std::fixed << std::setprecision(3) << speedInMBPerSecond << " MB/s" << std::endl;
-    std::cout << "Achieved size: " << totalBytes << " Bytes" << std::endl;
-    std::cout << "Compression ratio: " << std::fixed << std::setprecision(3) << CR << std::endl;
+    std::ofstream info_file("info.txt",std::ios::app);
+    info_file << "denum_compress: original denum" << std::endl;
+    info_file << "Logname: " << logname << std::endl;
+    info_file << "Replacement completed in " << duration.count() << " milliseconds." << std::endl;
+    info_file << "Compression speed: " << std::fixed << std::setprecision(8) << speedInMBPerSecond << " MB/s" << std::endl;
+    info_file << "Achieved size: " << totalBytes << " Bytes" << std::endl;
+    info_file << "Compression ratio: " << std::fixed << std::setprecision(8) << CR << std::endl;
+    info_file << "----------------------------------------" << std::endl;
+    info_file.close();
     if (output_logs == "2") {
         std::ofstream final_log_file("output/" + logname + ".log");
         for (const auto& [block_id, output] : final_outputs) {
@@ -747,3 +866,6 @@ int main(int argc, char* argv[]) {
     }
     return 0;
 }
+//g++ -O3 -std=c++17 -o denum_compress denum_compress.cpp -lboost_iostreams -lpthread -lpcre2-8
+//在原版基础上加了线程限制
+//./denum_compress Windows 100000 1

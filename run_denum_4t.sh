@@ -1,6 +1,6 @@
 #!/bin/bash
-# Original Denum, 4 worker threads (hardcoded in denum_compress.cpp),
-# block size 100000, mode 1. Per-block compression is tar -cJf (xz -6).
+# Denum, 4 worker threads, block size 100000, mode 1.
+# Per-block compression is `tar --use-compress-program='lzma -6'` (baseline version).
 # Run from the directory that contains Logs/<name>/<name>.log.
 set -u
 cd "$(dirname "$0")"
@@ -18,7 +18,7 @@ echo "build done $(date -Is)" | tee -a results/run.log
 
 for name in $LIST; do
     echo "=== $name start $(date -Is) ===" | tee -a results/run.log
-    ./denum_compress "$name" 100000 1 > "results/$name.out" 2> "results/$name.err"
+    ./denum_compress "$name" 100000 1 4 > "results/$name.out" 2> "results/$name.err"
     rc=$?
     echo "=== $name rc=$rc end $(date -Is) ===" | tee -a results/run.log
 done
